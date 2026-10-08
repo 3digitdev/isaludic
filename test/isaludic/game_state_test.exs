@@ -210,6 +210,182 @@ defmodule Isaludic.GameStateTest do
     end
   end
 
+  describe "advance_game/1 in the kill phase" do
+    test "with an unrevealed zombie left, goes back to reveal without drawing" do
+      state = GameState.new(jokers: 2) |> Map.put("phase", :kill)
+      result = GameState.advance_game(state)
+
+      assert result["phase"] == :reveal
+      assert result["deck"] == state["deck"]
+    end
+
+    test "with everything revealed and a zombie alive, draws straight into place" do
+      state =
+        GameState.new(jokers: 2) |> Map.put("phase", :kill) |> reveal_all_zombies()
+
+      [top | rest] = state["deck"]
+
+      assert %{"phase" => :place, "active_card" => ^top, "deck" => ^rest} =
+               GameState.advance_game(state)
+    end
+
+    test "with every zombie dead, wins" do
+      state =
+        GameState.new(jokers: 2)
+        |> Map.put("phase", :kill)
+        |> reveal_all_zombies()
+        |> kill_all_zombies()
+
+      assert %{"phase" => :end, "status" => :win} = GameState.advance_game(state)
+    end
+  end
+
+  describe "kill_zombie/2" do
+    test "kills exactly the chosen zombie, then moves on" do
+      state = GameState.new(jokers: 2) |> Map.put("phase", :kill) |> reveal_all_zombies()
+      result = GameState.kill_zombie(state, {2, :bottom})
+
+      dead = for {pos, list} <- result["zombies"], z <- list, not z.alive?, do: {pos, z.index}
+      assert dead == [bottom: 2]
+      assert result["phase"] == :place
+    end
+
+    test "killing the last zombie wins the game" do
+      state = GameState.new(jokers: 2) |> Map.put("phase", :kill) |> reveal_all_zombies()
+
+      last_alive =
+        state["zombies"]
+        |> Map.values()
+        |> List.flatten()
+        |> Enum.reject(&(&1.pos == :top and &1.index == 0))
+        |> Enum.map(&{&1.index, &1.pos})
+
+      state =
+        Enum.reduce(last_alive, state, fn {idx, pos}, acc ->
+          kill_without_advancing(acc, idx, pos)
+        end)
+
+      assert %{"phase" => :end, "status" => :win} = GameState.kill_zombie(state, {0, :top})
+    end
+  end
+
+  describe "valid_target/2" do
+    defp targeting(card), do: GameState.new(jokers: 2) |> Map.put("active_card", card)
+
+    test "same color needs an equal or higher card" do
+      state = targeting(card(5, :heart))
+      assert GameState.valid_target(state, card(5, :diamond))
+      assert GameState.valid_target(state, card(4, :diamond))
+      refute GameState.valid_target(state, card(6, :diamond))
+    end
+
+    test "different color needs an equal or lower card" do
+      state = targeting(card(5, :heart))
+      assert GameState.valid_target(state, card(5, :club))
+      assert GameState.valid_target(state, card(6, :club))
+      refute GameState.valid_target(state, card(4, :club))
+    end
+
+    test "nothing is a valid target without an active card" do
+      state = GameState.new(jokers: 2)
+      assert state["active_card"] == nil
+      refute GameState.valid_target(state, card(5, :spade))
+      refute GameState.valid_target(state, joker())
+    end
+
+    test "jokers match anything, in either direction" do
+      assert GameState.valid_target(targeting(joker()), card(13, :club))
+      assert GameState.valid_target(targeting(card(2, :heart)), joker())
+    end
+  end
+
+  describe "place_card/2 killable zombies" do
+    # Every zombie is a revealed, living jack and every house card is a 5♠, so any
+    # zombie whose line the placed card is in would die (the other two 5s make 10).
+    # That leaves adjacency as the only thing deciding who is killable.
+    defp adjacency_state do
+      jack = fn pos, idx ->
+        %{
+          card: %Card{value: 11, suit: :heart, face: :jack, is_joker: false},
+          pos: pos,
+          index: idx,
+          alive?: true,
+          revealed?: true
+        }
+      end
+
+      zombies =
+        Map.new([:top, :bottom, :left, :right], fn pos ->
+          {pos, Enum.map(0..2, &jack.(pos, &1))}
+        end)
+
+      Map.merge(GameState.new(jokers: 2), %{
+        "phase" => :place,
+        "active_card" => card(5, :spade),
+        "house" => for(_ <- 0..2, do: for(_ <- 0..2, do: card(5, :spade))),
+        "zombies" => zombies
+      })
+    end
+
+    defp killable_at(state, pos) do
+      {_state, killable} = GameState.place_card(state, pos)
+      Enum.sort(killable)
+    end
+
+    test "a corner kills the two zombies touching it" do
+      assert killable_at(adjacency_state(), {0, 0}) == [{0, :left}, {0, :top}]
+      assert killable_at(adjacency_state(), {2, 2}) == [{2, :bottom}, {2, :right}]
+      assert killable_at(adjacency_state(), {0, 2}) == [{0, :right}, {2, :top}]
+      assert killable_at(adjacency_state(), {2, 0}) == [{0, :bottom}, {2, :left}]
+    end
+
+    test "an edge kills the one zombie touching it" do
+      assert killable_at(adjacency_state(), {0, 1}) == [{1, :top}]
+      assert killable_at(adjacency_state(), {1, 0}) == [{1, :left}]
+      assert killable_at(adjacency_state(), {1, 2}) == [{1, :right}]
+      assert killable_at(adjacency_state(), {2, 1}) == [{1, :bottom}]
+    end
+
+    test "the center kills nothing" do
+      assert killable_at(adjacency_state(), {1, 1}) == []
+    end
+
+    test "an adjacent zombie that is unrevealed or dead is not killable" do
+      state = adjacency_state()
+
+      state =
+        put_in(
+          state["zombies"][:top],
+          List.update_at(state["zombies"][:top], 0, &%{&1 | revealed?: false})
+        )
+
+      state =
+        put_in(
+          state["zombies"][:left],
+          List.update_at(state["zombies"][:left], 0, &%{&1 | alive?: false})
+        )
+
+      assert killable_at(state, {0, 0}) == []
+      assert killable_at(state, {0, 1}) == [{1, :top}]
+    end
+
+    test "an adjacent zombie still needs the attack total and suits to work out" do
+      state = adjacency_state()
+      # the other two cards in the column add up to 4, not 10
+      weak =
+        put_in(
+          state["house"],
+          [[card(2, :club), card(2, :club), card(2, :club)]] ++ tl(state["house"])
+        )
+
+      # col 0, row 1 sits on the left edge: only the left zombie (a row attack, 5 + 5) is adjacent
+      assert killable_at(weak, {1, 0}) == [{1, :left}]
+
+      # col 0, row 0 is a corner: the top zombie's column attack is now 2 + 2, so only the left one dies
+      assert killable_at(weak, {0, 0}) == [{0, :left}]
+    end
+  end
+
   defp map_zombies(state, fun) do
     update_in(state["zombies"], fn zombies ->
       Map.new(zombies, fn {pos, list} -> {pos, Enum.map(list, fun)} end)
@@ -217,4 +393,9 @@ defmodule Isaludic.GameStateTest do
   end
 
   defp kill_all_zombies(state), do: map_zombies(state, &%{&1 | alive?: false})
+
+  defp reveal_all_zombies(state), do: map_zombies(state, &%{&1 | revealed?: true})
+
+  defp kill_without_advancing(state, idx, pos),
+    do: update_in(state, ["zombies", pos, Access.at(idx)], &%{&1 | alive?: false})
 end

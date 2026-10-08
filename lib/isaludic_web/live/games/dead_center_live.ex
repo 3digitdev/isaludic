@@ -33,14 +33,16 @@ defmodule IsaludicWeb.Games.DeadCenterLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
-      <span
-        phx-click={leave_game()}
-        class="bg-slate-500 text-white font-bold text-2xl cursor-pointer absolute top-0 left-0 mt-2 ml-2"
-      >
-        Isaludic
-      </span>
-      <div class="w-full flex justify-center bg-slate-500 text-white p-2 font-bold text-2xl">
-        Dead Center
+      <div class="w-full flex items-center bg-slate-500 text-white p-2 font-bold text-2xl">
+        <span phx-click={leave_game()} class="flex-1 cursor-pointer">Isaludic</span>
+        <span phx-click="new_game" class="cursor-pointer">Dead Center</span>
+        <div class="flex-1 flex justify-end">
+          <.icon
+            name="hero-question-mark-circle"
+            class="size-8 cursor-pointer"
+            phx-click={JS.show(to: "#rules", display: "flex")}
+          />
+        </div>
       </div>
       <div class={[
         "w-full flex justify-center bg-cyan-600 text-white font-bold text-lg",
@@ -138,6 +140,85 @@ defmodule IsaludicWeb.Games.DeadCenterLive do
           </div>
         </div>
       </div>
+      <.modal id="rules" title="Dead Center">
+        <p>Played over a series of turns.  Each turn, you do the following, in order:</p>
+        <ol class="list-decimal pl-5">
+          <li>Reveal a <span class="text-lime-600">zombie</span> (if able)</li>
+          <li>Draw a card and <span class="text-amber-500">play it on a valid pile</span></li>
+          <li>
+            Kill a <span class="text-lime-600">zombie</span> adjacent to the card you played, if able
+          </li>
+        </ol>
+        <h3 class="text-xl font-bold mt-2">
+          <span class="text-amber-500">Reveal</span> a <span class="text-lime-600">Zombie</span>
+        </h3>
+        <p>
+          If any <span class="text-lime-600">zombies</span> are still facedown, choose one to reveal
+        </p>
+        <h3 class="text-xl font-bold mt-2">Play a Card</h3>
+        Draw the top card of the deck, and then choose a pile to <span class="text-amber-500">place it on</span>.
+        The pile(s) you can play the card on depend on a few rules based on the
+        value and suit of the card played and the top card of the pile. When you <span class="text-amber-500">play
+          a card</span>, it becomes the new top card of that pile. You may play your card either on:
+        <ul class="list-disc pl-5 font-semibold">
+          <li>A card of equal value</li>
+          <li>A card of the same color and greater value</li>
+          <li>A card of an opposite color and less value</li>
+        </ul>
+        <p>Aces have a value of 1.</p>
+        <p>
+          <span class="text-purple-700 font-semibold">Jokers</span>
+          may be played ON any card, and may have any card played ON them.
+        </p>
+        <h3 class="text-xl font-bold mt-2">
+          <span class="text-red-500">Kill</span> a <span class="text-lime-600">Zombie</span>
+        </h3>
+        <p>
+          After placing your card, you may <span class="text-red-500">kill</span>
+          a <strong class="font-bold">single</strong>
+          face-up <span class="text-lime-600">zombie</span>
+          adjacent to the pile you just played on, if your attack is strong enough.
+          (The four corners of the 3x3 grid have two adjacent
+          <span class="text-lime-600">zombies</span>
+          each, the edges have one, and the center has none).
+        </p>
+        <p>
+          The strength of your attack isn't based on the card you played, but rather its <strong class="font-bold text-cyan-500">support cards</strong>:  the
+          <strong class="font-bold text-cyan-500">two other cabin cards</strong>
+          on the same line as the card you just played and the zombie you’re  attacking.
+        </p>
+        <p>
+          For an attack to
+          <sppan class="text-red-500">kill</sppan>
+          a <span class="text-lime-600">zombie</span>, the sum of these
+          <span class="text-cyan-500">two support cards</span>
+          must be at least 10. In addition:
+        </p>
+        <ul class="list-disc pl-5 font-semibold">
+          <li>
+            To kill a <strong class="font-bold">king</strong>, both support cards must match the king's
+            <strong class="font-bold">suit</strong>
+          </li>
+          <li>
+            To kill a <strong class="font-bold">queen</strong>, both
+            <span class="text-cyan-500">support</span>
+            cards must match the queen's <strong class="font-bold">color</strong>
+          </li>
+          <li>
+            There are no suit/color restrictions to kill a<strong class="font-bold">jack</strong>
+          </li>
+        </ul>
+        <p>
+          When used as an attack <span class="text-cyan-500">support card</span>,
+          <span class="text-purple-700 font-semibold">Jokers</span>
+          have value zero but count as all suits.
+          A <span class="text-purple-700 font-semibold">Joker</span>
+          must be paired with a 10 to kill. If you can’t kill any
+          <span class="text-lime-600">zombie</span>
+          with the card you played, nothing
+          happens; proceed to the next turn.
+        </p>
+      </.modal>
     </Layouts.app>
     """
   end
@@ -154,13 +235,13 @@ defmodule IsaludicWeb.Games.DeadCenterLive do
         :highlight,
         cond do
           assigns.phase == :reveal and not assigns.zombie.revealed? ->
-            "!border-3 !border-amber-300"
+            "!border-3 !border-amber-300 cursor-pointer"
 
           assigns.phase == :kill and assigns.killable? ->
-            "!border-3 !border-red-500"
+            "!border-3 !border-red-500 cursor-pointer"
 
           true ->
-            "!border-2 !border-lime-600"
+            "!border-2 !border-lime-600 cursor-not-allowed"
         end
       )
 
@@ -244,14 +325,21 @@ defmodule IsaludicWeb.Games.DeadCenterLive do
   end
 
   defp house_card_attrs(state, card, {row, col}) do
+    valid? = GameState.valid_target(state, card)
+
     cond do
-      state["phase"] == :place and GameState.valid_target(state, card) ->
-        {"!border-3 !border-amber-300", %{event: "place_card", row: row, col: col}}
+      state["phase"] == :place and valid? ->
+        {"!border-3 !border-amber-300 cursor-pointer", %{event: "place_card", row: row, col: col}}
+
+      state["phase"] == :place and not valid? ->
+        {"cursor-not-allowed", nil}
 
       state["phase"] == :kill and GameState.placed?(state, {row, col}) ->
         {"!border-3 !border-orange-400", nil}
 
-      state["phase"] == :kill and GameState.in_line_with_placed?(state, {row, col}) ->
+      # No zombie touches the center, so there are no support cards to show there.
+      state["phase"] == :kill and not GameState.placed?(state, {1, 1}) and
+          GameState.in_line_with_placed?(state, {row, col}) ->
         {"!border-3 !border-cyan-500", nil}
 
       true ->

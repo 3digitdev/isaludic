@@ -35,5 +35,47 @@ defmodule IsaludicWeb.CoreComponentsTest do
     refute html =~ "★"
   end
 
+  test "modal renders its title and content, with an X that hides it" do
+    html =
+      render_component(&modal/1,
+        id: "rules",
+        title: "Rules",
+        inner_block: [%{__slot__: :inner_block, inner_block: fn _, _ -> "Don't let them in." end}]
+      )
+
+    assert html =~ ~s(id="rules")
+    assert html =~ "Rules"
+    assert html =~ "Don&#39;t let them in." or html =~ "Don't let them in."
+    assert html =~ ~s(aria-label="Close")
+    assert html =~ "hide"
+    assert html =~ "#rules"
+  end
+
+  test "modal also closes on a click outside the panel and on Escape" do
+    html =
+      render_component(&modal/1,
+        id: "rules",
+        title: "Rules",
+        inner_block: [%{__slot__: :inner_block, inner_block: fn _, _ -> "body" end}]
+      )
+
+    doc = LazyHTML.from_fragment(html)
+    backdrop = LazyHTML.query(doc, "#rules > div.absolute")
+    assert [click] = LazyHTML.attribute(backdrop, "phx-click")
+    assert click =~ "#rules"
+
+    root = LazyHTML.query(doc, "#rules")
+    assert LazyHTML.attribute(root, "phx-key") == ["Escape"]
+    assert [keydown] = LazyHTML.attribute(root, "phx-window-keydown")
+    assert keydown =~ "#rules"
+
+    # the panel is capped at 90dvh and only its content scrolls
+    assert LazyHTML.query(doc, "#rules > div.max-h-\\[90dvh\\]") |> Enum.count() == 1
+    assert LazyHTML.query(doc, "#rules div.overflow-y-auto") |> Enum.count() == 1
+
+    # the panel (where the content lives) is not inside the backdrop
+    assert LazyHTML.query(backdrop, "h2") |> Enum.count() == 0
+  end
+
   defp card_html(card), do: render_component(&card/1, card: card)
 end

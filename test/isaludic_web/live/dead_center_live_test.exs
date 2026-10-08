@@ -54,4 +54,23 @@ defmodule IsaludicWeb.Games.DeadCenterLiveTest do
     view |> element("span", "Isaludic") |> render_click()
     assert_redirect(view, "/")
   end
+
+  describe "kill-phase support highlight" do
+    defp kill_phase_state(placed_at),
+      do: GameState.new(jokers: 2) |> Map.merge(%{"phase" => :kill, "placed_at" => placed_at})
+
+    defp cyan_count(html), do: html |> String.split("!border-cyan-500") |> length() |> Kernel.-(1)
+
+    test "lights up the placed card's row and column" do
+      {:ok, _view, html} = mount_with(%{"dead-center" => Jason.encode!(kill_phase_state([0, 0]))})
+      # row 0 and column 0 cross at the placed cell: 3 + 3 - 1, minus the placed cell itself
+      assert cyan_count(html) == 4
+    end
+
+    test "is off for the center, where no zombie is adjacent" do
+      {:ok, _view, html} = mount_with(%{"dead-center" => Jason.encode!(kill_phase_state([1, 1]))})
+      assert cyan_count(html) == 0
+      assert html =~ "!border-orange-400"
+    end
+  end
 end

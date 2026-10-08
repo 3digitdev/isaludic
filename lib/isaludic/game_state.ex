@@ -172,6 +172,9 @@ defmodule Isaludic.GameState do
 
   defp end_state(zombies), do: if(Enum.any?(zombies, & &1.alive?), do: :lose, else: :win)
 
+  # With no active card (outside the place phase) nothing is a valid target.
+  def valid_target(%{"active_card" => nil}, _target), do: false
+
   def valid_target(state, target) do
     card = state["active_card"]
 
@@ -204,6 +207,9 @@ defmodule Isaludic.GameState do
 
   def place_card(state, _pos), do: {state, []}
 
+  # Only zombies standing right next to the placed card can be killed: two in a
+  # corner, one on an edge, none in the center. A zombie in the top/bottom row of
+  # zombies is attacked by the rest of its column; left/right, by the rest of its row.
   defp killable_zombies(state, {row, col}) do
     zombies_by_coord =
       state["zombies"]
@@ -211,31 +217,28 @@ defmodule Isaludic.GameState do
       |> List.flatten()
       |> Map.new(&{{&1.index, &1.pos}, &1})
 
-    col_atk_cards =
-      state["house"]
-      |> Enum.at(col)
-      |> List.delete_at(row)
+    # The other two cards in the placed card's column / row (house is [col][row]).
+    col_atk_cards = state["house"] |> Enum.at(col) |> List.delete_at(row)
+    row_atk_cards = state["house"] |> Enum.map(&Enum.at(&1, row)) |> List.delete_at(col)
 
-    row_atk_cards =
-      state["house"]
-      |> Enum.map(&Enum.at(&1, row))
-      |> List.delete_at(col)
+    {row, col}
+    |> adjacent_zombie_coords()
+    |> Enum.filter(fn {_idx, pos} = coords ->
+      atk_cards = if pos in [:top, :bottom], do: col_atk_cards, else: row_atk_cards
+      kill?(Map.fetch!(zombies_by_coord, coords), atk_cards)
+    end)
+  end
 
-    col_zombies =
-      [
-        Map.get(zombies_by_coord, {col, :top}),
-        Map.get(zombies_by_coord, {col, :bottom})
-      ]
-      |> Enum.filter(&kill?(&1, col_atk_cards))
-
-    row_zombies =
-      [
-        Map.get(zombies_by_coord, {row, :left}),
-        Map.get(zombies_by_coord, {row, :right})
-      ]
-      |> Enum.filter(&kill?(&1, row_atk_cards))
-
-    Enum.map(col_zombies ++ row_zombies, &{&1.index, &1.pos})
+  # `{index, pos}` of every zombie touching the house cell `{row, col}`.
+  @spec adjacent_zombie_coords({0..2, 0..2}) :: list({0..2, zombie_pos()})
+  defp adjacent_zombie_coords({row, col}) do
+    [
+      row == 0 && {col, :top},
+      row == 2 && {col, :bottom},
+      col == 0 && {row, :left},
+      col == 2 && {row, :right}
+    ]
+    |> Enum.filter(& &1)
   end
 
   defp kill?(%{alive?: false}, _), do: false

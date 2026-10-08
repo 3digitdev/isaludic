@@ -143,10 +143,65 @@ defmodule IsaludicWeb.CoreComponents do
   """
   attr :name, :string, required: true
   attr :class, :any, default: "size-4"
+  attr :rest, :global
 
   def icon(%{name: "hero-" <> _} = assigns) do
     ~H"""
-    <span class={[@name, @class]} />
+    <span class={[@name, @class]} {@rest} />
+    """
+  end
+
+  @doc """
+  A very basic modal: a title, a close (X) button and the inner content.
+
+  It starts hidden and is opened client-side with `JS.show/2`. The X, a click
+  outside the panel, or Escape closes it. The panel is at most 90dvh tall; the
+  title stays put and the content scrolls.
+  `display: "flex"` is needed to centre the panel.
+
+  ## Examples
+
+      <button phx-click={JS.show(to: "#rules", display: "flex")}>Rules</button>
+
+      <.modal id="rules" title="Rules">
+        Don't let the zombies in.
+      </.modal>
+  """
+  attr :id, :string, required: true
+  attr :title, :string, required: true
+  slot :inner_block, required: true
+
+  def modal(assigns) do
+    ~H"""
+    <div
+      id={@id}
+      class="fixed inset-0 z-50 hidden items-center justify-center"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={"#{@id}-title"}
+      phx-window-keydown={JS.hide(to: "##{@id}")}
+      phx-key="Escape"
+    >
+      <%!-- The backdrop is a sibling of the panel (not its parent), so only clicks outside the panel hit it. --%>
+      <div class="absolute inset-0 bg-black/50" phx-click={JS.hide(to: "##{@id}")} />
+      <div class="relative flex max-h-[90dvh] w-full max-w-3xl flex-col rounded-lg bg-white p-4 shadow-lg">
+        <div class="flex shrink-0 items-center gap-4">
+          <div class="flex-1" />
+          <h2 id={"#{@id}-title"} class="text-3xl font-bold">{@title}</h2>
+          <div class="flex-1 flex justify-end">
+            <button
+              type="button"
+              class="cursor-pointer"
+              aria-label="Close"
+              phx-click={JS.hide(to: "##{@id}")}
+            >
+              <.icon name="hero-x-mark" class="size-6" />
+            </button>
+          </div>
+        </div>
+        <div class="mt-2 min-h-0 overflow-y-auto mr-4">{render_slot(@inner_block)}</div>
+      </div>
+    </div>
     """
   end
 
@@ -306,7 +361,7 @@ defmodule IsaludicWeb.CoreComponents do
     ~H"""
     <div class={["relative h-20 w-16", @class]}>
       <%= if @cards == [] do %>
-        <.card_slot class="h-20 w-16" click={@click} />
+        <.card_slot class="h-20 w-16" />
       <% else %>
         <div :if={@has_under} class="absolute rotate-5">
           <.card
@@ -329,7 +384,7 @@ defmodule IsaludicWeb.CoreComponents do
     ~H"""
     <div class={["relative h-20 w-16", @class]}>
       <%= if @cards == [] do %>
-        <.card_slot click={@click} />
+        <.card_slot />
       <% else %>
         <div :if={@has_under} class="absolute rotate-5">
           <.card
@@ -365,7 +420,7 @@ defmodule IsaludicWeb.CoreComponents do
 
     ~H"""
     <div class="relative h-16 w-12 cursor-pointer">
-      <.card_slot :if={@cards == []} click={@click} />
+      <.card_slot :if={@cards == []} />
       <%= for {card, idx} <- Enum.with_index(Enum.reverse(@cards)) do %>
         <% under_card = not @expanded and idx < length(@cards) - 1 %>
         <div
